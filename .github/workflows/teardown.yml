@@ -1,0 +1,30 @@
+name: Teardown EC2
+
+on:
+  workflow_dispatch:   # <-- esto permite correrlo manualmente desde GitHub
+
+jobs:
+  teardown:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Stop and remove containers on EC2
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+
+            echo "Parando y eliminando contenedores..."
+            docker rm -f practica-app || true
+            docker rm -f practica-mysql || true
+
+            echo "Eliminando red (si existe)..."
+            docker network rm practica-net || true
+
+            echo "Estado actual de Docker:"
+            docker ps -a
+
+            echo "Teardown completado."
