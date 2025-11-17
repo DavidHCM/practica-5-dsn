@@ -1,4 +1,4 @@
-name: CI
+name: CI-CD
 
 on:
   push:
@@ -6,12 +6,18 @@ on:
   pull_request:
     branches: [ "main", "master" ]
 
+env:
+  IMAGE_NAME: practica-perros-api
+
 jobs:
+  # -----------------------
+  # 1) BUILD + TEST
+  # -----------------------
   build-and-test:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Node.js
@@ -25,5 +31,129 @@ jobs:
       - name: Run tests
         run: npm test
 
+  # -----------------------
+  # 2) DOCKER BUILD + PUSH TO ECR
+  #    (solo si build-and-test fue exitoso)
+  # -----------------------
+  docker-build-and-push-ecr:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+      ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+      IMAGE_TAG: ${{ github.sha }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
       - name: Build Docker image
-        run: docker build -t practica-perros-api .
+        run: |
+          docker build -t $IMAGE_NAME:$IMAGE_TAG .
+
+      - name: Tag image for ECR
+        run: |
+          ECR_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY
+
+          # Tag único por commit
+          docker tag $IMAGE_NAME:$IMAGE_TAG $ECR_URI:$IMAGE_TAG
+
+          # Tag 'latest' opcional
+          docker tag $IMAGE_NAME:$IMAGE_TAG $ECR_URI:latest
+
+      - name: Push image to ECR
+        run: |
+          ECR_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY
+          docker push $ECR_URI:$IMAGE_TAG
+          docker push $ECR_URI:latest
+
+  # -----------------------
+  # 3) DEPLOY A EC2
+  #    (solo si push a ECR fue exitoso)
+  # -----------------------
+  deploy-to-ec2:
+    runs-on: ubuntu-latest
+    needs: docker-build-and-push-ecr
+
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+      ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+      IMAGE_TAG: ${{ github.sha }}
+      DB_USER_PROD: ${{ secrets.DB_USER_PROD }}
+      DB_PASS_PROD: ${{ secrets.DB_PASS_PROD }}
+      DB_NAME_PROD: ${{ secrets.DB_NAME_PROD }}
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          envs: AWS_REGION,AWS_ACCOUNT_ID,ECR_REPOSITORY,IMAGE_TAG,DB_USER_PROD,DB_PASS_PROD,DB_NAME_PROD
+          script: |
+            set -e
+
+            ECR_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY
+
+            echo "Instalando Docker si es necesario..."
+            if ! command -v docker &> /dev/null; then
+              curl -fsSL https://get.docker.com -o get-docker.sh
+              sh get-docker.sh
+              sudo usermod -aG docker $USER || true
+            fi
+
+            echo "Login a ECR desde EC2..."
+            aws ecr get-login-password --region $AWS_REGION \
+              | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+
+            echo "Creando red de Docker (si no existe)..."
+            docker network create practica-net || true
+
+            echo "Levantando contenedor de MySQL (prod)..."
+            docker rm -f practica-mysql || true
+            docker run -d --name practica-mysql --network practica-net \
+              -e MYSQL_ROOT_PASSWORD=$DB_PASS_PROD \
+              -e MYSQL_DATABASE=$DB_NAME_PROD \
+              -e MYSQL_USER=$DB_USER_PROD \
+              -e MYSQL_PASSWORD=$DB_PASS_PROD \
+              -p 3306:3306 \
+              mysql:8.0
+
+            echo "Pull de imagen de la app desde ECR..."
+            docker pull $ECR_URI:$IMAGE_TAG
+
+            echo "Levantando contenedor de la app..."
+            docker rm -f practica-app || true
+            docker run -d --name practica-app --network practica-net \
+              -p 80:3000 \
+              -e APP_ENV=prod \
+              -e DB_HOST_PROD=practica-mysql \
+              -e DB_PORT_PROD=3306 \
+              -e DB_USER_PROD=$DB_USER_PROD \
+              -e DB_PASS_PROD=$DB_PASS_PROD \
+              -e DB_NAME_PROD=$DB_NAME_PROD \
+              $ECR_URI:$IMAGE_TAG
+
+            echo "Despliegue completo. Verifica en http://$HOST/"
