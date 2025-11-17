@@ -1,0 +1,8 @@
+USE practica_local;
+
+CREATE TABLE IF NOT EXISTS perros (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(100) NOT NULL,
+  raza VARCHAR(100) NOT NULL,
+  edad INT NOT NULL
+);

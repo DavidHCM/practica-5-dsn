@@ -1,0 +1,31 @@
+version: "3.9"
+
+services:
+  db:
+    image: mysql:8.0
+    container_name: practica-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: practica_local
+      MYSQL_USER: appuser
+      MYSQL_PASSWORD: apppassword
+    ports:
+      - "3307:3306"
+    volumes:
+      - ./mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - mysql_data:/var/lib/mysql
+
+  app:
+    build: .
+    container_name: practica-app
+    restart: unless-stopped
+    depends_on:
+      - db
+    env_file:
+      - .env.docker
+    ports:
+      - "3000:3000"
+
+volumes:
+  mysql_data:
