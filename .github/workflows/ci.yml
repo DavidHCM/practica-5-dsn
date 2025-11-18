@@ -111,7 +111,7 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          envs: AWS_REGION,AWS_ACCOUNT_ID,ECR_REPOSITORY,IMAGE_TAG,DB_USER_PROD,DB_PASS_PROD,DB_NAME_PROD
+          envs: AWS_REGION,AWS_ACCOUNT_ID,ECR_REPOSITORY,IMAGE_TAG,DB_USER_PROD,DB_PASS_PROD,DB_NAME_PROD,EC2_HOST
           script: |
             set -e
 
@@ -141,6 +141,24 @@ jobs:
               -p 3306:3306 \
               mysql:8.0
 
+            echo "Esperando a que MySQL acepte conexiones..."
+            until docker exec practica-mysql mysql -u"$DB_USER_PROD" -p"$DB_PASS_PROD" -e "SELECT 1" > /dev/null 2>&1; do
+              echo "MySQL aún no está listo, reintentando en 5s..."
+              sleep 5
+            done
+
+            echo "Aplicando migraciones mínimas (BD y tabla 'perros')..."
+            docker exec practica-mysql mysql -u"$DB_USER_PROD" -p"$DB_PASS_PROD" -e "
+              CREATE DATABASE IF NOT EXISTS $DB_NAME_PROD;
+              USE $DB_NAME_PROD;
+              CREATE TABLE IF NOT EXISTS perros (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                nombre VARCHAR(100) NOT NULL,
+                raza VARCHAR(100) NOT NULL,
+                edad INT NOT NULL
+              );
+            "
+
             echo "Pull de imagen de la app desde ECR..."
             docker pull $ECR_URI:$IMAGE_TAG
 
@@ -156,4 +174,4 @@ jobs:
               -e DB_NAME_PROD=$DB_NAME_PROD \
               $ECR_URI:$IMAGE_TAG
 
-            echo "Despliegue completo. Verifica en http://$HOST/"
+            echo "Despliegue completo. Verifica en http://$EC2_HOST/health"
