@@ -11,7 +11,7 @@ env:
 
 jobs:
   # -----------------------
-  # 1) BUILD + TEST
+  # BUILD + TEST
   # -----------------------
   build-and-test:
     runs-on: ubuntu-latest
@@ -32,8 +32,7 @@ jobs:
         run: npm test
 
   # -----------------------
-  # 2) DOCKER BUILD + PUSH TO ECR
-  #    (solo si build-and-test fue exitoso)
+  # DOCKER BUILD + PUSH A ECR
   # -----------------------
   docker-build-and-push-ecr:
     runs-on: ubuntu-latest
@@ -81,8 +80,7 @@ jobs:
           docker push $ECR_URI:latest
 
   # -----------------------
-  # 3) DEPLOY A EC2
-  #    (solo si push a ECR fue exitoso)
+  # DEPLOY A EC2
   # -----------------------
   deploy-to-ec2:
     runs-on: ubuntu-latest
