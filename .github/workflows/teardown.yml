@@ -1,7 +1,7 @@
 name: Teardown EC2
 
 on:
-  workflow_dispatch:   # <-- esto permite correrlo manualmente desde GitHub
+  workflow_dispatch:
 
 jobs:
   teardown:
